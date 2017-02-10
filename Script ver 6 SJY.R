@@ -8,6 +8,7 @@
 # 3.4 eda on shop id 1 to 300
 # 4. try auto arima
 # 5. try forecastxgb
+# 6. try forecastxgb with external regressors
 
 #########################################################################################################################################
 
@@ -28,7 +29,7 @@ colnames(user_view)=c("user_id","shop_id","time_stamp");
 head(user_view)
 
 # save rdata file to share
-save.image("tc_st_0208_prep.RData")
+save.image("tc_st_0210_prep.RData")
 
 
 #########################################################################################################################################
@@ -202,3 +203,83 @@ print("Full process done.")
 
 write.table(pre_res,file="prediction4.csv",quote = FALSE,sep=",",row.names=FALSE,col.names=FALSE,fileEncoding="UTF-8")
 
+
+#########################################################################################################################################
+# 6. try forecastxgb with external regressors
+
+# load aggregated data
+setwd("C:/Users/steven-j.yu/Downloads/Steven's/4. 项目/4.5 其他项目/6.5 数据分析/20170123 IJCAI-17口碑/dataset")
+user_pay_gp_hldprv <- read.csv("tc_user_pay_gp_by_IDDateCnt_hp_added.csv",sep=",",fileEncoding="UTF-8",header=TRUE)
+head(user_pay_gp_hldprv)
+
+# try forecastxgb using external regressors - one x
+library(forecastxgb)
+shop1 <- sqldf("select Date,CNT,HolidayTypeNum,WeekdayNum from user_pay_gp_hldprv where shop_id = 1 order by Date")
+head(shop1)
+
+shop1CNT <- ts(shop1$CNT)
+shop1WeekdayNum <- matrix(shop1$WeekdayNum, dimnames = list(NULL, "WeekdayNum"))
+head(shop1WeekdayNum)
+
+shop1_fxgb_wkdn <- xgbar(y=shop1CNT,x=shop1WeekdayNum)
+shop1_fxgb_wkdn_future <- matrix(forecast(xgbar(ts(shop1$WeekdayNum)), h = 14)$mean, 
+                             dimnames = list(NULL, "WeekdayNum")) # we need forecast the x feature first
+
+plot(forecast(shop1_fxgb_wkdn, xreg = shop1_fxgb_wkdn_future))
+
+
+# try forecastxgb using external regressors - two x
+head(shop1)
+
+shop1CNT <- ts(shop1$CNT)
+shop1HTNWN <- matrix(shop1$HolidayTypeNum, shop1$WeekdayNum, dimnames = list("HolidayTypeNum","WeekdayNum"))
+head(shop1HTNWN)
+
+shop1_fxgb_wkdn <- xgbar(y=shop1CNT,x=shop1WeekdayNum)
+shop1_fxgb_wkdn_future <- matrix(forecast(xgbar(ts(shop1$WeekdayNum)), h = 14)$mean, 
+                                 dimnames = list(NULL, "WeekdayNum")) # we need forecast the x feature first
+
+plot(forecast(shop1_fxgb_wkdn, xreg = shop1_fxgb_wkdn_future))
+
+# recap results into desired frame
+
+
+
+
+pre_res <- data.frame(t(c(as.integer(1),as.integer(trunc(shop1_fxgb_fc$mean)))),stringsAsFactors = FALSE)
+head(pre_res)
+
+colnames(pre_res) <- c('shop_id','day_1','day_2'  ,'day_3'  ,'day_4'  ,'day_5'  ,'day_6'	,'day_7'	,'day_8'	,'day_9'	,'day_10'	,'day_11'	,'day_12'	,'day_13'	,'day_14')
+head(pre_res)
+
+
+# create function for forecastxgb result
+library(sqldf)
+shop_list <- sqldf("select shop_id from shop_info group by shop_id")
+str(shop_list)
+
+for (i in 2:2000){
+  
+  print(paste("Start processing shop ",i,". ", percentage((i-1)/2000), " processed.")
+        
+        # 1. select data by id
+        current_shop_id <- as.character(shop_list[[1]][i])
+        sqltorun <- paste("select Date,CNT from user_pay_gp where shop_id = ", i, " order by Date")
+        current_shop <- sqldf(sqltorun)
+        print("Select data by id done.")
+        
+        # 2. apply forecastxgb
+        current_shop_aa <- xgbar(ts(current_shop$CNT))
+        current_shop_aa_pr <- forecast(current_shop_aa,h=14)
+        current_shop_res <- data.frame(t(c(as.integer(i),as.integer(trunc(current_shop_aa_pr$mean)))),stringsAsFactors = FALSE)
+        colnames(current_shop_res) <- c('shop_id','day_1','day_2'  ,'day_3'  ,'day_4'  ,'day_5'	,'day_6'	,'day_7'	,'day_8'	,'day_9'	,'day_10'	,'day_11'	,'day_12'	,'day_13'	,'day_14')
+        print("Apply auto arima done.")
+        
+        # 3. combine data into one frame
+        pre_res <- rbind(pre_res,current_shop_res,stringsAsFactors = F)
+        print("Combine data done.")
+}
+
+print("Full process done.")
+
+write.table(pre_res,file="prediction4.csv",quote = FALSE,sep=",",row.names=FALSE,col.names=FALSE,fileEncoding="UTF-8")
